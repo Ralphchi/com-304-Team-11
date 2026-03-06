@@ -50,7 +50,7 @@ To get started, follow the instructions in the [nanoGPT notebook](./nano4M/noteb
 ### 4. Homework 3: nanoMaskGIT [Worth 10% of your overall grade]
 In this homework, you will implement a **masked generative model** in the style of **[MaskGIT](https://masked-generative-image-transformer.github.io/)**. Along the way, you will learn about **bi-directional attention**, **encoder-only Transformer** models, basic **masking schemes**, and **masked modelling** on text and images.
 
-You can find the exercises and detailed instructions in the [nanoMaskGIT notebook (coming soon)](TODO).
+You can find the exercises and detailed instructions in the [nanoMaskGIT notebook](./nano4M/notebooks/COM304_FM_part2_nanoMaskGIT.ipynb).
 
 ### 5. Homework 4: 4M Tutorial [Worth 7.5% of your overall grade]
 You will explore the multimodal foundation model **[4M](https://4m.epfl.ch/)**. This hands-on experience will help you understand the model's key components and how to utilize its pipeline for generation and retrieval tasks.
