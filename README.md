@@ -60,7 +60,7 @@ Follow the instructions in the [4M_Tutorial](./4M_Tutorial/) folder to learn mor
 ### 6. Homework 5: nano4M [Worth 20% of your overall grade]
 You will implement a minimal version of 4M, which will give you a practical understanding of how to design and train multimodal foundation models.
 
-See the [nano4M notebook (coming soon)](TODO) for the full set of exercises and instructions.
+See the [nano4M notebook](./nano4M/notebooks/COM304_FM_part3_nano4M.ipynb) for the full set of exercises and instructions.
 
 ### 7. Advanced Homework 6: nanoFlowMatching [Worth 10% of your overall grade]
 In this advanced homework, you will implement a minimal **[Flow Matching](https://arxiv.org/abs/2210.02747)** model. The exercise covers **continuous normalizing flows**, **vector field regression**, and how flow-based generative models can be used for high-quality image generation.
