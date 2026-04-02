@@ -7,14 +7,9 @@ Welcome to the nanoVLM exercise! In this exercise, you will be introduced to Vis
 
 ## Environment Setup
 
-Clone the repository:
+Follow the instructions below to set up the environment:
 ```bash
-git clone https://github.com/muzairkhattak/nano-vlm-0.1.git
-cd nano-vlm-0.1
-```
-
-Then follow the instructions below to set up the environment:
-```bash
+cd nanovlm
 # Create a new environment
 conda create -n nanovlm python=3.12
 conda activate nanovlm
