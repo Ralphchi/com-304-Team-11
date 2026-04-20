@@ -1,0 +1,16 @@
+.DS_Store
+# Training outputs (do not commit large checkpoints)
+nano4M/outputs/
+nanoVLM/checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# System
+.DS_Store
+.ipynb_checkpoints/
+
+# Local
+.claude/settings.local.json
