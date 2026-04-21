@@ -36,10 +36,22 @@ class MatchResult:
     unmatched_gt: List[int]
 
 
+DEFAULT_POSITION_THRESHOLD: float = 5.0
+"""Default Euclidean-distance cap for accepting a Hungarian pairing.
+
+Chosen on 2026-04-21 from the 30-sample val fixture
+(nano4M/tests/fixtures/scene_desc_samples.txt). Across several multi-object
+scenes the minimum observed inter-object distance was ~7-10 pixels, so 5.0
+sits below that floor — a predicted object more than 5 px from any GT is
+almost certainly a wrong pairing and should count as a false positive rather
+than be paired with the nearest (wrong) GT. Pass `position_threshold=None`
+to accept every Hungarian assignment regardless of distance."""
+
+
 def match_objects(
     predicted: List[SceneObject],
     ground_truth: List[SceneObject],
-    position_threshold: Optional[float] = None,
+    position_threshold: Optional[float] = DEFAULT_POSITION_THRESHOLD,
 ) -> MatchResult:
     """Hungarian-match predicted objects to GT objects by 2D position.
 
@@ -51,7 +63,8 @@ def match_objects(
     position_threshold : float, optional
         If provided, matches with position distance exceeding this threshold
         are treated as unmatched (both sides become false pos/neg).
-        If None, all assignments from the Hungarian solver are kept.
+        Default is `DEFAULT_POSITION_THRESHOLD` (5.0) — see its docstring.
+        Pass None to accept every Hungarian assignment regardless of distance.
 
     Returns
     -------
@@ -61,9 +74,6 @@ def match_objects(
     -----
     - Uses scipy.optimize.linear_sum_assignment. Cost = Euclidean distance on (x, y).
     - When len(predicted) != len(ground_truth), extras are returned as unmatched.
-    - TODO(Ralph, Week 1): Decide on a sensible default for `position_threshold`
-      once we know the typical inter-object distance in CLEVR (likely ~10-20
-      grid units; ±3 px per proposal Section IV suggests threshold ~5).
     """
     # Deferred import so the module can be imported without scipy present
     # (useful for quick tests of scene_parser alone).
