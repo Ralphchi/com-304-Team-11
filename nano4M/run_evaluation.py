@@ -92,6 +92,13 @@ def main() -> int:
         print(f"Config not found: {args.config}", file=sys.stderr)
         return 1
 
+    sys.exit(
+        "run_evaluation.py is Week-2 work in progress.\n"
+        "EvalHarness.load() and .run() are not yet implemented — see TODOs in\n"
+        "nano4M/nanofm/evaluation/eval_harness.py. This CLI will work once a\n"
+        "trained variant checkpoint exists and the harness is wired up."
+    )
+
     harness = EvalHarness(
         checkpoint_path=str(args.ckpt),
         config_path=str(args.config),
