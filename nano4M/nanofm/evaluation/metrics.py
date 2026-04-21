@@ -119,6 +119,46 @@ def rgb_ssim(pred: torch.Tensor, gt: torch.Tensor) -> float:
     return float(sum(scores) / len(scores)) if scores else float("nan")
 
 
+def rgb_fid(pred: torch.Tensor, gt: torch.Tensor, feature_dim: int = 2048) -> float:
+    """Fréchet Inception Distance over a batch of images.
+
+    Proposal Section IV reports FID as a *secondary* RGB metric — the proposal
+    explicitly notes it is unreliable on synthetic CLEVR data but commits to
+    reporting it for completeness.
+
+    Parameters
+    ----------
+    pred, gt : (B, 3, H, W) float tensors in [0, 1]
+    feature_dim : int
+        InceptionV3 feature dimension. 2048 is the standard (final pool);
+        smaller values (64/192/768) index earlier Inception pool layers and
+        are useful for faster tests.
+
+    Returns
+    -------
+    float
+        FID between `pred` and `gt`. Lower is better; exactly 0 iff the two
+        batches have identical InceptionV3 feature distributions. FID is
+        noisy when the number of samples is small (<50); callers should
+        accumulate across the entire eval set before reading the metric,
+        not call once per sample.
+
+    Notes
+    -----
+    - Deferred import: torchmetrics is only needed for this function, so
+      `metrics.py` remains importable without it (parser / scene_desc metrics
+      stay usable).
+    - On first use torchmetrics downloads the InceptionV3 weights (~95 MB).
+      This requires internet; on SCITAS compute nodes use a pre-warmed cache.
+    """
+    from torchmetrics.image.fid import FrechetInceptionDistance  # type: ignore
+
+    fid = FrechetInceptionDistance(feature=feature_dim, normalize=True)
+    fid.update(gt.detach().cpu().clamp(0, 1), real=True)
+    fid.update(pred.detach().cpu().clamp(0, 1), real=False)
+    return float(fid.compute().item())
+
+
 # ----------------------------------------------------------- scene_desc
 
 def scene_desc_per_field_accuracy(

@@ -17,6 +17,7 @@ from nanofm.evaluation.metrics import (
     depth_rmse,
     depth_delta1,
     normals_angular_error,
+    rgb_fid,
     scene_desc_per_field_accuracy,
 )
 
@@ -65,6 +66,37 @@ def test_normals_90_degrees_off():
     gt[:, 2, :, :] = 1.0  # +z
     err = normals_angular_error(pred, gt)
     assert err == pytest.approx(90.0, abs=1e-2)
+
+
+# ----------------------------------------------------------------- FID
+
+def test_fid_same_batch_near_zero():
+    """FID(x, x) over a batch should be close to zero.
+
+    Not exactly zero because sqrtm(cov(features_real) * cov(features_fake))
+    introduces numerical error on small batches, but should land well below
+    any meaningful FID value.
+    """
+    pytest.importorskip("torchmetrics")
+    torch.manual_seed(0)
+    # InceptionV3 resizes internally; small spatial dims keep the test fast.
+    batch = torch.rand(64, 3, 64, 64)
+    val = rgb_fid(batch, batch, feature_dim=64)
+    assert val < 5.0, f"FID(x, x) should be near zero, got {val}"
+
+
+def test_fid_divergent_batches_positive():
+    """FID between clearly different distributions must be clearly positive.
+
+    One batch is random noise, the other is a constant image. They should
+    occupy disjoint regions of InceptionV3 feature space.
+    """
+    pytest.importorskip("torchmetrics")
+    torch.manual_seed(0)
+    noise = torch.rand(64, 3, 64, 64)
+    constant = torch.full((64, 3, 64, 64), 0.5)
+    val = rgb_fid(noise, constant, feature_dim=64)
+    assert val > 10.0, f"FID between disjoint distributions should be large, got {val}"
 
 
 # ----------------------------------------------------------- scene_desc
