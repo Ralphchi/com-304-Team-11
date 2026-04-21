@@ -30,6 +30,7 @@ from .metrics import (
     depth_delta1,
     normals_angular_error,
     rgb_ssim,
+    rgb_fid,
     scene_desc_per_field_accuracy,
 )
 
@@ -46,6 +47,7 @@ class EvalResults:
     normals_angular_error: float = float("nan")
     # RGB
     rgb_ssim: float = float("nan")
+    rgb_fid: float = float("nan")  # secondary; proposal Section IV
     # Scene desc
     scene_desc_position: float = float("nan")
     scene_desc_shape: float = float("nan")
@@ -63,6 +65,7 @@ class EvalResults:
             "depth/delta1": self.depth_delta1,
             "normals/angular_error_deg": self.normals_angular_error,
             "rgb/ssim": self.rgb_ssim,
+            "rgb/fid": self.rgb_fid,
             "scene_desc/position": self.scene_desc_position,
             "scene_desc/shape": self.scene_desc_shape,
             "scene_desc/color": self.scene_desc_color,
