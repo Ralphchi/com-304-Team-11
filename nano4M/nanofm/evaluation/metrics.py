@@ -178,9 +178,23 @@ def scene_desc_per_field_accuracy(
     Returns dict: {"position": float, "shape": float, "color": float,
                   "material": float, "exact_sequence": float}
 
-    - "exact_sequence" requires same length AND every field correct
-      on every object (proxy for sequence-match score).
-    - All other entries are micro-averaged across objects across all samples.
+    - All non-exact_sequence entries are micro-averaged across objects
+      across all samples.
+
+    exact_sequence semantics
+    ------------------------
+    Defined here as: same length AND every predicted object matched
+    one-to-one with a GT object via the Hungarian matcher AND every field
+    correct on every pair. **Order-independent** — the predicted objects
+    may appear in any order relative to GT, since the Hungarian matcher
+    aligns them by position.
+
+    The proposal (Section IV) says "plus exact-sequence match" which is
+    ambiguous between this order-independent reading, an order-preserving
+    reading (objects must appear in GT order after sorting by position),
+    and a string-identical reading (decoded pred string == GT string).
+    Team clarification pending (asked 2026-04-21); if the team picks a
+    different interpretation, update this function accordingly.
 
     Parameters
     ----------
