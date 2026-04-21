@@ -11,24 +11,32 @@ Prints, for N real CLEVR val samples, the masks produced by a given variant:
   (caption), then the indices of target / encoder positions, then the decoded
   token at each target position so teammates can sanity-check span masking.
 
+Variants (revised extension plan, Section III):
+  - baseline       V0 Random i.i.d.       (Gabriel)  - SimpleMultimodalMasking
+  - block          V1 Block on images     (Nacer)    - BlockMasking
+  - inverse-block  V2 Inv-Block on images (Gabriel)  - InverseBlockMasking
+  - span           V3 Span on scene_desc  (Ricardo)  - SpanMasking
+
 Usage (run on SCITAS, needs the CLEVR mount):
 
-    cd nano4M && python scripts/inspect_scene_desc.py --variant baseline --n 3
-    cd nano4M && python scripts/inspect_scene_desc.py --variant block    --n 3
-    cd nano4M && python scripts/inspect_scene_desc.py --variant span     --n 3
-    cd nano4M && python scripts/inspect_scene_desc.py --variant mixed    --n 3
+    cd nano4M && python scripts/inspect_scene_desc.py --variant baseline      --n 3
+    cd nano4M && python scripts/inspect_scene_desc.py --variant block         --n 3
+    cd nano4M && python scripts/inspect_scene_desc.py --variant inverse-block --n 3
+    cd nano4M && python scripts/inspect_scene_desc.py --variant span          --n 3
 
-For non-baseline variants the helper looks up
-`nanofm.data.multimodal.masking.{BlockMasking,SpanMasking,MixedMasking}`
-by name. If a class isn't defined yet, it raises a clear error pointing
-at the teammate's task.
+For non-baseline variants the helper tries importing from per-variant files
+(`nanofm.data.multimodal.block_masking`, `span_masking`, `inverse_block_masking`)
+first, then falls back to the bundled `masking.py`, then raises a clear error
+if neither has the class. This lets the inspector work whether the teammate
+opts for separate files (revised plan default) or a shared module.
 
 Week-1 gate: every variant produces valid masks on a held-out batch
-(proposal Section V, TEAM.md lines 94-100).
+(revised extension plan Section V).
 """
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 from pathlib import Path
 
@@ -58,12 +66,73 @@ GRID_SIZE = 16
 DATA_ROOT = "/work/com-304/datasets/clevr_com_304/"
 
 
+VARIANTS = {
+    # variant key -> (class name, per-variant module, extras for constructor)
+    "block": (
+        "BlockMasking",
+        "nanofm.data.multimodal.block_masking",
+        dict(
+            image_modalities=["tok_rgb@256", "tok_depth@256", "tok_normal@256"],
+            text_modalities=["scene_desc"],
+            grid_size=16,
+            block_sizes=[2, 3, 4],
+        ),
+    ),
+    "inverse-block": (
+        "InverseBlockMasking",
+        "nanofm.data.multimodal.inverse_block_masking",
+        dict(
+            image_modalities=["tok_rgb@256", "tok_depth@256", "tok_normal@256"],
+            text_modalities=["scene_desc"],
+            grid_size=16,
+            visible_block_sizes=[4, 5, 6],
+        ),
+    ),
+    "span": (
+        "SpanMasking",
+        "nanofm.data.multimodal.span_masking",
+        dict(
+            text_modalities=["scene_desc"],
+            mean_span_length=3,
+        ),
+    ),
+}
+
+
+def _resolve_variant_class(class_name: str, preferred_module: str):
+    """Find the variant class by trying the per-variant module first, then
+    falling back to the shared `masking.py` module. Returns the class or
+    raises RuntimeError with a teammate-facing message."""
+    # Try the per-variant file first (revised plan's default layout).
+    try:
+        mod = importlib.import_module(preferred_module)
+    except ModuleNotFoundError:
+        mod = None
+    if mod is not None:
+        cls = getattr(mod, class_name, None)
+        if cls is not None:
+            return cls
+    # Fall back to the shared masking.py (alt layout if teammates kept it bundled).
+    cls = getattr(masking_mod, class_name, None)
+    if cls is not None:
+        return cls
+    raise RuntimeError(
+        f"{class_name} not found in {preferred_module} or nanofm.data.multimodal.masking.\n"
+        "  Revised extension plan (Section V, W1): teammates own:\n"
+        "    V1 BlockMasking          -> Nacer    -> block_masking.py\n"
+        "    V2 InverseBlockMasking   -> Gabriel  -> inverse_block_masking.py\n"
+        "    V3 SpanMasking           -> Ricardo  -> span_masking.py\n"
+        "  The owner of this variant must ship the class before this helper\n"
+        "  can inspect their masks. See TEAM.md."
+    )
+
+
 def build_masking(variant: str):
     """Instantiate the masking transform for the requested variant.
 
-    Baseline uses SimpleMultimodalMasking directly. Other variants look up
-    {BlockMasking, SpanMasking, MixedMasking} in the masking module and
-    construct them with the arguments documented in each variant's YAML.
+    Baseline uses SimpleMultimodalMasking from the shared module. Other variants
+    resolve per the revised file-per-variant layout (with a fallback to the
+    shared module for teammates who keep the bundled layout).
     """
     baseline_kwargs = dict(
         modalities=MODALITIES,
@@ -81,54 +150,20 @@ def build_masking(variant: str):
     if variant == "baseline":
         return masking_mod.SimpleMultimodalMasking(**baseline_kwargs)
 
-    class_name = {
-        "block": "BlockMasking",
-        "span": "SpanMasking",
-        "mixed": "MixedMasking",
-    }[variant]
-
-    cls = getattr(masking_mod, class_name, None)
-    if cls is None:
-        raise RuntimeError(
-            f"{class_name} is not defined in nanofm.data.multimodal.masking yet.\n"
-            f"  - Baseline (Gabriel) / Block (Nacer) / Span (Ricardo) / Mixed (Gabriel)\n"
-            f"    — the owner of this variant must ship the class before this\n"
-            f"    helper can inspect their masks. See TEAM.md lines 156-175."
-        )
-
-    # Variant classes must accept the same baseline kwargs plus their own
-    # extra hyperparameters. We pass baseline kwargs and let the class surface
-    # its own required extras via a TypeError if the contract drifts.
-    extras: dict = {}
-    if variant == "block":
-        extras = dict(
-            image_modalities=IMAGE_MODALITIES,
-            text_modalities=TEXT_MODALITIES,
-            grid_size=GRID_SIZE,
-            block_sizes=[2, 3, 4],
-        )
-    elif variant == "span":
-        extras = dict(
-            text_modalities=TEXT_MODALITIES,
-            mean_span_length=3,
-        )
-    elif variant == "mixed":
-        extras = dict(
-            image_modalities=IMAGE_MODALITIES,
-            text_modalities=TEXT_MODALITIES,
-            grid_size=GRID_SIZE,
-            block_sizes=[2, 3, 4],
-            mean_span_length=3,
-        )
+    if variant not in VARIANTS:
+        raise ValueError(f"Unknown variant: {variant!r}. Known: {['baseline', *VARIANTS]}")
+    class_name, preferred_module, extras = VARIANTS[variant]
+    cls = _resolve_variant_class(class_name, preferred_module)
 
     try:
         return cls(**baseline_kwargs, **extras)
     except TypeError as e:
         raise RuntimeError(
             f"{class_name} rejected the inspector's constructor arguments: {e}\n"
-            f"  The inspector passes: baseline SimpleMultimodalMasking kwargs +\n"
-            f"  {list(extras.keys())}. If your class uses a different signature,\n"
-            f"  update scripts/inspect_scene_desc.py or align the signature."
+            f"  Inspector passes: baseline SimpleMultimodalMasking kwargs +\n"
+            f"  {list(extras.keys())}. If the class uses a different signature,\n"
+            f"  update VARIANTS in scripts/inspect_scene_desc.py or align the\n"
+            f"  signature."
         ) from e
 
 
@@ -213,9 +248,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Inspect masks for a Team-11 variant.")
     ap.add_argument(
         "--variant",
-        choices=["baseline", "block", "span", "mixed"],
+        choices=["baseline", "block", "inverse-block", "span"],
         required=True,
-        help="Which masking variant to inspect",
+        help="Which masking variant to inspect (revised extension plan Section III)",
     )
     ap.add_argument(
         "--n",
