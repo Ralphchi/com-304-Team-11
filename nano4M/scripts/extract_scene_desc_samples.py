@@ -40,7 +40,7 @@ from nanofm.data.multimodal.simple_multimodal_dataset import SimpleMultimodalDat
 
 DATA_ROOT = "/work/com-304/datasets/clevr_com_304/"
 SPLIT = "val"
-N_SAMPLES = 30
+N_SAMPLES = 500
 OUT_PATH = ROOT / "tests" / "fixtures" / "scene_desc_samples.txt"
 
 
@@ -83,7 +83,8 @@ def main() -> None:
         lines.append(f"ROUNDTRIP| {rt}")
         lines.append("")
 
-        print(f"[sample {i:02d}] RAW={raw[:100]}{'…' if len(raw) > 100 else ''}")
+        if N_SAMPLES <= 30 or i < 5 or i >= N_SAMPLES - 3 or i % 50 == 0:
+            print(f"[sample {i:03d}] RAW={raw[:100]}{'…' if len(raw) > 100 else ''}")
 
     # Write fixture file
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
