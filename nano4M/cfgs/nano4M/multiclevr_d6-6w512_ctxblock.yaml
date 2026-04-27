@@ -1,7 +1,13 @@
-# Variant 3 (V3): mixed masking — block on image modalities + span on scene_desc.
-# Owned by Gabriel. See proposal Section III.
+# Variant 2 (V2): context-block masking on image-like modalities (RGB, depth, normals),
+# baseline random masking on scene_desc.
+# Owned by Gabriel. See proposal Section III.V2.
+#
+# Each image modality gets a single contiguous s x s visible "context block"
+# in the 16x16 token grid; everything outside the block is a candidate target.
+# scene_desc keeps baseline random masking. s is sampled per call from {4, 5, 6};
+# block POSITION is sampled per image modality independently.
 
-run_name: multiclevr_d6-6w512_mixed
+run_name: multiclevr_d6-6w512_ctxblock
 output_dir: ./outputs/auto
 
 global_vars:
@@ -14,25 +20,7 @@ global_vars:
   input_tokens_range: [1, 128]
   target_tokens_range: [1, 128]
 
-# ============================================================
-# MASKING STRATEGY — V3 MIXED MASKING  (Gabriel, Week 1)
-# ============================================================
-# Implement `MixedMasking` in nanofm/data/multimodal/masking.py that
-# dispatches to V1 block masking for image modalities and V2 span masking
-# for scene_desc in the same batch. Relies on Nacer's BlockMasking and
-# Ricardo's SpanMasking being merged first (or copied into MixedMasking).
-#
-# Placeholder block (fill in once the factory supports it):
-#
-# masking:
-#   _target_: nanofm.data.multimodal.masking.MixedMasking
-#   image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
-#   text_modalities: ["scene_desc"]
-#   block_grid_size: 16
-#   block_sizes: [2, 3, 4]
-#   span_mean_length: 3
-# ============================================================
-
+# Training
 batch_size: ${global_vars.batch_size}
 total_tokens: 5000
 warmup_tokens: 500
@@ -93,6 +81,12 @@ train_loader_config:
   shuffle: True
   drop_last: True
   distributed: True
+  masking:
+    _target_: nanofm.data.multimodal.context_block_masking.ContextBlockMasking
+    image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
+    text_modalities: ["scene_desc"]
+    grid_size: 16
+    context_block_sizes: [4, 5, 6]
 
 eval_loader_config:
   _target_: nanofm.data.multimodal.create_multimodal_masked_dataloader
@@ -115,3 +109,9 @@ eval_loader_config:
   shuffle: False
   drop_last: False
   distributed: True
+  masking:
+    _target_: nanofm.data.multimodal.context_block_masking.ContextBlockMasking
+    image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
+    text_modalities: ["scene_desc"]
+    grid_size: 16
+    context_block_sizes: [4, 5, 6]

@@ -12,20 +12,20 @@ Prints, for N real CLEVR val samples, the masks produced by a given variant:
   token at each target position so teammates can sanity-check span masking.
 
 Variants (revised extension plan, Section III):
-  - baseline       V0 Random i.i.d.       (Gabriel)  - SimpleMultimodalMasking
-  - block          V1 Block on images     (Nacer)    - BlockMasking
-  - inverse-block  V2 Inv-Block on images (Gabriel)  - InverseBlockMasking
-  - span           V3 Span on scene_desc  (Ricardo)  - SpanMasking
+  - baseline       V0 Random i.i.d.        (Gabriel)  - SimpleMultimodalMasking
+  - block          V1 Block on images      (Nacer)    - BlockMasking
+  - context-block  V2 Ctx-Block on images  (Gabriel)  - ContextBlockMasking
+  - span           V3 Span on scene_desc   (Ricardo)  - SpanMasking
 
 Usage (run on SCITAS, needs the CLEVR mount):
 
     cd nano4M && python scripts/inspect_scene_desc.py --variant baseline      --n 3
     cd nano4M && python scripts/inspect_scene_desc.py --variant block         --n 3
-    cd nano4M && python scripts/inspect_scene_desc.py --variant inverse-block --n 3
+    cd nano4M && python scripts/inspect_scene_desc.py --variant context-block --n 3
     cd nano4M && python scripts/inspect_scene_desc.py --variant span          --n 3
 
 For non-baseline variants the helper tries importing from per-variant files
-(`nanofm.data.multimodal.block_masking`, `span_masking`, `inverse_block_masking`)
+(`nanofm.data.multimodal.block_masking`, `span_masking`, `context_block_masking`)
 first, then falls back to the bundled `masking.py`, then raises a clear error
 if neither has the class. This lets the inspector work whether the teammate
 opts for separate files (revised plan default) or a shared module.
@@ -78,14 +78,14 @@ VARIANTS = {
             block_sizes=[2, 3, 4],
         ),
     ),
-    "inverse-block": (
-        "InverseBlockMasking",
-        "nanofm.data.multimodal.inverse_block_masking",
+    "context-block": (
+        "ContextBlockMasking",
+        "nanofm.data.multimodal.context_block_masking",
         dict(
             image_modalities=["tok_rgb@256", "tok_depth@256", "tok_normal@256"],
             text_modalities=["scene_desc"],
             grid_size=16,
-            visible_block_sizes=[4, 5, 6],
+            context_block_sizes=[4, 5, 6],
         ),
     ),
     "span": (
@@ -120,7 +120,7 @@ def _resolve_variant_class(class_name: str, preferred_module: str):
         f"{class_name} not found in {preferred_module} or nanofm.data.multimodal.masking.\n"
         "  Revised extension plan (Section V, W1): teammates own:\n"
         "    V1 BlockMasking          -> Nacer    -> block_masking.py\n"
-        "    V2 InverseBlockMasking   -> Gabriel  -> inverse_block_masking.py\n"
+        "    V2 ContextBlockMasking   -> Gabriel  -> context_block_masking.py\n"
         "    V3 SpanMasking           -> Ricardo  -> span_masking.py\n"
         "  The owner of this variant must ship the class before this helper\n"
         "  can inspect their masks. See TEAM.md."
@@ -248,7 +248,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Inspect masks for a Team-11 variant.")
     ap.add_argument(
         "--variant",
-        choices=["baseline", "block", "inverse-block", "span"],
+        choices=["baseline", "block", "context-block", "span"],
         required=True,
         help="Which masking variant to inspect (revised extension plan Section III)",
     )

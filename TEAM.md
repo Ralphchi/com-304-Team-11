@@ -1,7 +1,8 @@
 # COM-304 Team 11 — Extension: Alternate Masking Strategies for nano4M
 
-Extension project exploring whether structured masking (block on images, span
-on text, mixed) outperforms the uniform-random baseline used by nano4M.
+Extension project exploring whether structured masking (block on images,
+context-block on images, span on text) outperforms the uniform-random
+baseline used by nano4M.
 
 See `COM_304_Extension_plan___Team_11.pdf` (separate document) for the full
 proposal.
@@ -10,12 +11,16 @@ proposal.
 
 ## Team roles
 
-| Person  | Role                                                                    | Branch                              |
-|---------|-------------------------------------------------------------------------|-------------------------------------|
-| Nacer   | V1 Block masking on image modalities                                    | `extension/nacer-block-masking`     |
-| Ricardo | V2 Span masking on scene descriptions                                   | `extension/ricardo-span-masking`    |
-| Gabriel | V3 Mixed masking + controlled baseline retraining                       | `extension/gabriel-mixed-masking`   |
-| Ralph   | Scene-description parser, Hungarian matcher, per-modality metric harness | `extension/ralph-evaluation`        |
+| Person  | Role                                                                            | Branch                              |
+|---------|---------------------------------------------------------------------------------|-------------------------------------|
+| Nacer   | V1 Block masking on image modalities                                            | `extension/nacer-block-masking`     |
+| Ricardo | V3 Span masking on scene descriptions                                           | `extension/ricardo-span-masking`    |
+| Gabriel | V0 Baseline retraining + V2 Context-block masking on images (revised proposal)  | `extension/gabriel-context-block`   |
+| Ralph   | Scene-description parser, Hungarian matcher, per-modality metric harness        | `extension/ralph-evaluation`        |
+
+> Note: Gabriel's branch was renamed from `extension/gabriel-mixed-masking` →
+> `extension/gabriel-context-block` on 2026-04-27 to match the revised proposal.
+> The implementation file is `nanofm/data/multimodal/context_block_masking.py`.
 
 ---
 
@@ -24,21 +29,30 @@ proposal.
 ```
 nano4M/
 ├── nanofm/
-│   ├── data/multimodal/masking.py       # <-- teammates add BlockMasking / SpanMasking / MixedMasking here
+│   ├── data/multimodal/
+│   │   ├── masking.py                   # SimpleMultimodalMasking (baseline V0; do not modify)
+│   │   ├── block_masking.py             # <-- Nacer adds BlockMasking here (V1)
+│   │   ├── context_block_masking.py     # ContextBlockMasking (V2, Gabriel)
+│   │   └── span_masking.py              # <-- Ricardo adds SpanMasking here (V3)
 │   └── evaluation/                      # <-- Ralph's scaffold
 │       ├── scene_parser.py              #     parse CLEVR scene_desc -> SceneObject list
 │       ├── hungarian_match.py           #     align predicted objects to GT by position
 │       ├── metrics.py                   #     depth / normals / RGB / scene_desc metrics
 │       └── eval_harness.py              #     load checkpoint -> eval 500 samples -> metrics
+├── scripts/
+│   ├── cosmos_sanity_check.py           # Week-1 tokenizer-fidelity gate (Ralph) — SCITAS-only
+│   ├── inspect_scene_desc.py            # Week-1 visual mask inspection (Ralph) — SCITAS-only
+│   └── validate_masks.py                # Week-1 automated mask invariants (Gabriel) — runs anywhere
 ├── tests/
 │   ├── test_scene_parser.py             #     Week-1 gate
-│   └── test_metrics.py
+│   ├── test_metrics.py
+│   └── test_context_block_masking.py    #     V2 invariants in pytest form (Gabriel)
 ├── cfgs/nano4M/
 │   ├── multiclevr_d6-6w512.yaml             (reference)
 │   ├── multiclevr_d6-6w512_baseline.yaml    (Gabriel)
 │   ├── multiclevr_d6-6w512_block.yaml       (Nacer)
 │   ├── multiclevr_d6-6w512_span.yaml        (Ricardo)
-│   └── multiclevr_d6-6w512_mixed.yaml       (Gabriel)
+│   └── multiclevr_d6-6w512_ctxblock.yaml    (Gabriel — V2)
 ├── run_training.py
 └── run_evaluation.py                       # <-- Ralph's harness entry point
 ```
@@ -98,6 +112,8 @@ When your slice is ready for review:
     - Image modalities: visual inspection of the mask overlay
     - scene_desc: print the masked span positions
   - Parser unit tests pass: `cd nano4M && python -m pytest tests/ -v`
+  - Automated mask invariants pass for every shipped variant: `cd nano4M && python scripts/validate_masks.py`
+    (variants whose class isn't shipped yet skip cleanly with `[SKIP]`)
 
 ### Week 2 — Training (~4 GPU-h each)
 - Queue all four runs on SCITAS by end of Week 1 to absorb scheduling delay:
@@ -110,7 +126,7 @@ When your slice is ready for review:
   OMP_NUM_THREADS=1 torchrun --nproc_per_node=2 run_training.py \
       --config cfgs/nano4M/multiclevr_d6-6w512_span.yaml
   OMP_NUM_THREADS=1 torchrun --nproc_per_node=2 run_training.py \
-      --config cfgs/nano4M/multiclevr_d6-6w512_mixed.yaml
+      --config cfgs/nano4M/multiclevr_d6-6w512_ctxblock.yaml
   ```
 - Ralph finalises the metric harness on the Notebook 4 checkpoint while
   the runs complete.
@@ -120,7 +136,7 @@ When your slice is ready for review:
 ### Week 3 — Evaluation (~2 GPU-h)
 - Run evaluation across all four checkpoints on 500 held-out samples × 3 seeds:
   ```bash
-  for v in baseline block span mixed; do
+  for v in baseline block span ctxblock; do
     for seed in 0 1 2; do
       python run_evaluation.py \
         --ckpt outputs/nano4M/multiclevr_d6-6w512_${v}/checkpoint-final.safetensors \
@@ -153,20 +169,30 @@ Reported as mean ± std across 3 generation seeds per variant.
 
 ## Key implementation pointers
 
-### Adding a new masking class (Nacer / Ricardo / Gabriel)
+### Adding a new masking class (Nacer / Ricardo)
 
-The current factory `nanofm.data.multimodal.create_multimodal_masked_dataloader`
-hard-codes `SimpleMultimodalMasking`. You will need to:
+`nanofm.data.multimodal.create_multimodal_masked_dataloader` now accepts an
+optional Hydra-style `masking:` dict (added by Gabriel for V2). Steps:
 
-1. Add your new `BlockMasking` / `SpanMasking` / `MixedMasking` class in
-   `nano4M/nanofm/data/multimodal/masking.py`, exposing the same `__call__`
-   interface as `SimpleMultimodalMasking`.
-2. Extend `create_multimodal_masked_dataloader` to accept an optional
-   `masking` dict (e.g. with a `_target_` Hydra-style key) and use it to
-   construct the masking transform. Fall back to `SimpleMultimodalMasking`
-   when not provided (keeps the baseline working unchanged).
-3. Wire the `masking:` section in your variant's YAML config (placeholder
-   already present in the config file).
+1. Add your `BlockMasking` / `SpanMasking` class in its own per-variant file
+   (`nano4M/nanofm/data/multimodal/block_masking.py` /
+   `nano4M/nanofm/data/multimodal/span_masking.py`), inheriting from
+   `SimpleMultimodalMasking` so the constructor signature and output dict
+   structure stay aligned with FourM. See `context_block_masking.py` for a
+   reference implementation.
+2. Wire the `masking:` block in your variant's YAML config:
+   ```yaml
+   train_loader_config:
+     # ... existing fields ...
+     masking:
+       _target_: nanofm.data.multimodal.<your_module>.<YourClass>
+       <variant-specific kwargs>
+   ```
+   Repeat under `eval_loader_config`. The shared baseline kwargs (modalities,
+   vocab_sizes, alphas, ranges, overlap_*) are passed through automatically;
+   only list the variant-specific ones in the YAML.
+3. Add invariants for your variant in `scripts/validate_masks.py` (see the V2
+   block for the pattern) and a pytest module under `tests/`.
 
 Week-1 gate: run
   ```

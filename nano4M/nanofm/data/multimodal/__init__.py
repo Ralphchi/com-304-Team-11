@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -43,6 +43,7 @@ def create_multimodal_masked_dataloader(
     shuffle: bool = True,
     drop_last: bool = False,
     distributed: bool = False,
+    masking: Optional[Dict[str, Any]] = None,
 ):
     """
     Creates a dataloader for a multimodal masked dataset.
@@ -69,8 +70,14 @@ def create_multimodal_masked_dataloader(
         shuffle: Whether to shuffle the dataloader.
         drop_last: Whether to drop the last batch if it's smaller than the batch size.
         distributed: Whether to use a distributed sampler.
+        masking: Optional Hydra-style dict (`_target_` + extra kwargs) that selects
+            a custom masking class (e.g. `nanofm.data.multimodal.context_block_masking.ContextBlockMasking`).
+            The shared baseline kwargs above are passed through to the class
+            constructor; the `masking` dict supplies any additional, variant-specific
+            kwargs. When `masking` is None (default), falls back to
+            `SimpleMultimodalMasking` so the baseline config keeps working unchanged.
     """
-    masking_transforms = SimpleMultimodalMasking(
+    shared_masking_kwargs = dict(
         modalities=modalities,
         vocab_sizes=vocab_sizes,
         max_seq_lens=max_seq_lens,
@@ -81,6 +88,15 @@ def create_multimodal_masked_dataloader(
         overlap_vocab=overlap_vocab,
         overlap_posembs=overlap_posembs,
     )
+
+    if masking is None:
+        masking_transforms = SimpleMultimodalMasking(**shared_masking_kwargs)
+    else:
+        from hydra.utils import instantiate
+        # `instantiate(cfg, **kwargs)` merges kwargs into the cfg before constructing.
+        # Hydra's DictConfig accepts the merge, so this is the canonical way to inject
+        # the shared kwargs while letting the YAML supply variant-specific ones.
+        masking_transforms = instantiate(masking, **shared_masking_kwargs)
 
     dataset = SimpleMultimodalDataset(
         root_dir=root_dir,
