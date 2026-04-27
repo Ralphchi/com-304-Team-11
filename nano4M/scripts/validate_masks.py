@@ -28,6 +28,12 @@ V2-specific invariants asserted when --variant context-block (or "all"):
   * The same s is shared across the three image modalities in one __call__.
   * Image decoder positions are outside the visible block (regime 1).
 
+V3-specific invariants asserted when --variant span (or "all"):
+  * scene_desc decoder positions, sorted, form contiguous runs (= spans);
+    every run has length >= 1 and stays within [0, max_seq_len).
+  * Image modalities' decoder positions don't form a single contiguous run
+    (sanity check that random masking is preserved on image modalities).
+
 Variants whose class is not yet shipped are SKIPPED with a clear message.
 Returns exit 0 iff every non-skipped variant passes its invariants on every call.
 Writes a one-line summary per variant to nano4M/tests/fixtures/validate_masks_result.txt.
@@ -281,6 +287,54 @@ def assert_v2_context_block(masked: Dict[str, torch.Tensor]) -> None:
         )
 
 
+def assert_v3_span(masked: Dict[str, torch.Tensor]) -> None:
+    """V3-specific invariants for span masking on scene_desc."""
+    text_idx = MODALITIES.index("scene_desc")
+    text_max_len = MAX_SEQ_LENS[text_idx]
+
+    dec_sel = (masked["dec_modalities"] == text_idx) & masked["dec_pad_mask"]
+    dec_pos = sorted(masked["dec_positions"][dec_sel].tolist())
+
+    for p in dec_pos:
+        if not (0 <= p < text_max_len):
+            raise AssertionError(
+                f"scene_desc dec position {p} out of range [0, {text_max_len})"
+            )
+
+    # Group sorted positions into contiguous runs (= spans). Every run must
+    # have length >= 1; this is the structural definition of a span.
+    if dec_pos:
+        runs = []
+        run_start = dec_pos[0]
+        run_len = 1
+        for p in dec_pos[1:]:
+            if p == run_start + run_len:
+                run_len += 1
+            else:
+                runs.append((run_start, run_len))
+                run_start = p
+                run_len = 1
+        runs.append((run_start, run_len))
+        for rs, rl in runs:
+            if rl < 1:
+                raise AssertionError(f"span run at {rs} has invalid length {rl}")
+
+    # Sanity: image modalities should still look random. A single fully
+    # contiguous decoder run on any image modality (with len >= 4) is
+    # vanishingly unlikely under uniform random masking and indicates a bug.
+    for img_mod in IMAGE_MODALITIES:
+        mod_idx = MODALITIES.index(img_mod)
+        dec_sel = (masked["dec_modalities"] == mod_idx) & masked["dec_pad_mask"]
+        img_dec = sorted(masked["dec_positions"][dec_sel].tolist())
+        if len(img_dec) >= 4:
+            is_contig = all(img_dec[j + 1] == img_dec[j] + 1 for j in range(len(img_dec) - 1))
+            if is_contig:
+                raise AssertionError(
+                    f"image modality {img_mod} dec positions form a single contiguous "
+                    f"run of length {len(img_dec)}; image masking should stay random under V3"
+                )
+
+
 # ----------------------------- runner -----------------------------
 
 def run_variant(
@@ -301,6 +355,8 @@ def run_variant(
             assert_universal(masked)
             if variant == "context-block":
                 assert_v2_context_block(masked)
+            elif variant == "span":
+                assert_v3_span(masked)
         except AssertionError as e:
             return "FAIL", f"call {i} failed: {e}"
         except Exception as e:
