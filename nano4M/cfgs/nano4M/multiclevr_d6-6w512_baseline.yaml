@@ -38,7 +38,7 @@ eval_freq: 100
 save_ckpt_freq: 1000
 
 log_wandb: True
-wandb_project: COM304_nano4M_extension
+wandb_project: nano4M-masking
 wandb_entity: Com304-team11
 wandb_run_name: auto
 
