@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=my_job         # Change as needed
-#SBATCH --time=02:00:00
+#SBATCH --time=08:00:00
 #SBATCH --account=com-304
 #SBATCH --qos=com-304
 #SBATCH --gres=gpu:2                    # Request 2 GPUs
