@@ -54,7 +54,11 @@ def depth_delta1(pred: torch.Tensor, gt: torch.Tensor, eps: float = 1e-3) -> flo
     mask = _valid_mask(gt, eps)
     if not mask.any():
         return float("nan")
-    ratio = torch.maximum(pred[mask] / gt[mask], gt[mask] / pred[mask])
+    # Clamp pred to eps so a zero-valued prediction does not create inf in
+    # gt/pred. With eps=1e-3, any pred at or below the GT-validity threshold
+    # is treated as the same lower bound used for GT.
+    p = pred[mask].clamp(min=eps)
+    ratio = torch.maximum(p / gt[mask], gt[mask] / p)
     return float((ratio < 1.25).float().mean().item())
 
 

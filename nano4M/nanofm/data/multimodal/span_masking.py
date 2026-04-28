@@ -149,13 +149,17 @@ class SpanMasking(SimpleMultimodalMasking):
             if not placed:
                 # Retry exhaustion: fill remaining budget from any free
                 # positions. With baseline density (N <= 128, max_seq_len = 256,
-                # mu = 3) this branch is essentially unreachable.
+                # mu = 3) this branch is essentially unreachable. Decrement
+                # remaining by what we actually placed so we don't silently
+                # undershoot if free < remaining (only possible if upstream
+                # budget already exceeds max_seq_len, but be defensive).
                 free = sorted(set(range(max_seq_len)) - target_set)
                 if not free:
                     break
-                extra = random.sample(free, min(remaining, len(free)))
+                take = min(remaining, len(free))
+                extra = random.sample(free, take)
                 target_set.update(extra)
-                remaining = 0
+                remaining -= take
 
         free = sorted(set(range(max_seq_len)) - target_set)
         n_input_actual = min(n_input, len(free))
