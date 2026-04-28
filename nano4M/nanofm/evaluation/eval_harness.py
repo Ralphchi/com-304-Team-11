@@ -192,11 +192,17 @@ class EvalHarness:
         self.image_tokenizer = self._load_cosmos()
 
     def _load_cosmos(self):
+        import os
         from huggingface_hub import snapshot_download
         from cosmos_tokenizer.image_lib import ImageTokenizer
 
         repo_id = "nvidia/Cosmos-0.1-Tokenizer-DI16x16"
-        local_dir = "/tmp/nvidia/Cosmos-0.1-Tokenizer-DI16x16"
+        # Persistent scratch path so we don't re-download on every compute
+        # node. Override with COSMOS_LOCAL_DIR if a shared cache is preferred.
+        base = os.environ.get("COSMOS_LOCAL_DIR") or os.path.expanduser(
+            "~/cosmos_tokenizer"
+        )
+        local_dir = f"{base}/Cosmos-0.1-Tokenizer-DI16x16"
         snapshot_download(repo_id=repo_id, local_dir=local_dir)
         return ImageTokenizer(
             checkpoint_enc=f"{local_dir}/encoder.jit",

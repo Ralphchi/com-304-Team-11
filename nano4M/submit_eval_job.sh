@@ -4,9 +4,9 @@
 #SBATCH --account=com-304
 #SBATCH --qos=com-304
 #SBATCH --gres=gpu:1
-#SBATCH --mem=24G
+#SBATCH --mem-per-cpu=4G
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=6
 #SBATCH --output=eval_%j.out
 #SBATCH --error=eval_%j.err
 #SBATCH --partition=l40s
@@ -40,8 +40,13 @@ fi
 source /work/com-304/new_environment/anaconda3/etc/profile.d/conda.sh
 conda activate nanofm
 
-# Use the shared HF cache populated by scripts/prefetch_eval_models.py.
-export HF_HOME=/work/com-304/hf_cache
+# Per-user caches (populated once on a login node by
+# scripts/prefetch_eval_models.py and a one-shot Cosmos snapshot_download).
+# Override at submit time if your scratch lives elsewhere:
+#   sbatch --export=ALL,HF_HOME=/scratch/<gaspar>/hf_cache,COSMOS_LOCAL_DIR=... submit_eval_job.sh ...
+: "${HF_HOME:=/scratch/$USER/hf_cache}"
+: "${COSMOS_LOCAL_DIR:=/scratch/$USER/cosmos_tokenizer}"
+export HF_HOME COSMOS_LOCAL_DIR
 export TRANSFORMERS_OFFLINE=1
 export OMP_NUM_THREADS=1
 
