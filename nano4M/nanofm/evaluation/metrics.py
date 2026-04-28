@@ -17,7 +17,7 @@ References used while choosing metric formulations:
 - Per-field accuracy: defined in the extension proposal Section IV
 """
 
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 import math
 
 import torch
@@ -256,4 +256,125 @@ def scene_desc_per_field_accuracy(
         "material": _safe_div(correct["material"], totals["material"]),
         "set_match": _safe_div(set_match_correct, len(predicted)),
         "exact_sequence": _safe_div(exact_sequence_correct, len(predicted)),
+    }
+
+
+# --------------------------------------------- LLM-judge aggregator (Phase C)
+
+def caption_llm_judge(
+    originals: Sequence[str],
+    generateds: Sequence[str],
+    judge,
+    parser_set_match: Optional[Sequence[float]] = None,
+) -> Dict[str, float]:
+    """Aggregate Qwen-judge alignment scores over a batch of caption pairs.
+
+    Returns:
+        llm_alignment        : mean of per-sample alignment, excluding parse errors.
+        llm_perfect_rate     : fraction of samples with alignment == 1.0
+                               (parse-errors excluded).
+        llm_parse_error_rate : fraction of samples that returned parse_error=True.
+        parser_judge_corr    : Pearson correlation between parser_set_match and
+                               llm_alignment per sample (NaN if parser_set_match
+                               is None or all scores identical).
+    """
+    assert len(originals) == len(generateds)
+    if not originals:
+        return {
+            "llm_alignment": float("nan"),
+            "llm_perfect_rate": float("nan"),
+            "llm_parse_error_rate": float("nan"),
+            "parser_judge_corr": float("nan"),
+        }
+
+    scored = judge.score_batch(list(originals), list(generateds))
+    valid = [s for s in scored if not s.get("parse_error", False)]
+    n = len(scored)
+    n_valid = len(valid)
+    n_errors = n - n_valid
+
+    if n_valid == 0:
+        return {
+            "llm_alignment": float("nan"),
+            "llm_perfect_rate": float("nan"),
+            "llm_parse_error_rate": 1.0,
+            "parser_judge_corr": float("nan"),
+        }
+
+    alignments = [float(s["alignment"]) for s in valid]
+    mean_alignment = sum(alignments) / n_valid
+    perfect_rate = sum(1 for a in alignments if a >= 1.0) / n_valid
+
+    corr = float("nan")
+    if parser_set_match is not None and len(parser_set_match) == n:
+        # Pearson correlation across non-error samples.
+        valid_alignments = [
+            float(s["alignment"]) for s in scored if not s.get("parse_error", False)
+        ]
+        valid_parser = [
+            float(p) for p, s in zip(parser_set_match, scored)
+            if not s.get("parse_error", False)
+        ]
+        if len(valid_alignments) >= 2:
+            ax = valid_parser
+            ay = valid_alignments
+            mx = sum(ax) / len(ax)
+            my = sum(ay) / len(ay)
+            num = sum((x - mx) * (y - my) for x, y in zip(ax, ay))
+            denx = sum((x - mx) ** 2 for x in ax) ** 0.5
+            deny = sum((y - my) ** 2 for y in ay) ** 0.5
+            corr = num / (denx * deny) if denx > 0 and deny > 0 else float("nan")
+
+    return {
+        "llm_alignment": mean_alignment,
+        "llm_perfect_rate": perfect_rate,
+        "llm_parse_error_rate": n_errors / n,
+        "parser_judge_corr": corr,
+    }
+
+
+# ------------------------------------ Object-detection aggregator (Phase D)
+
+def rgb_object_detection_score(
+    images: Sequence[torch.Tensor],
+    expected_lists: Sequence[Sequence[SceneObject]],
+    verifier,
+) -> Dict[str, float]:
+    """Mean precision/recall/F1 of detected vs expected objects per sample.
+
+    Each `images[i]` is a (3, H, W) tensor in [0, 1]; each
+    `expected_lists[i]` is a list of SceneObject (parsed from the GT
+    caption). Calls `verifier.score(image, expected)` per sample.
+    """
+    assert len(images) == len(expected_lists)
+    if not images:
+        return {
+            "precision": float("nan"),
+            "recall": float("nan"),
+            "f1": float("nan"),
+            "perfect_rate": float("nan"),
+        }
+
+    precisions: List[float] = []
+    recalls: List[float] = []
+    f1s: List[float] = []
+    perfect = 0
+    for img, expected in zip(images, expected_lists):
+        s = verifier.score(img, list(expected))
+        if s["precision"] == s["precision"]:  # not NaN
+            precisions.append(float(s["precision"]))
+        if s["recall"] == s["recall"]:
+            recalls.append(float(s["recall"]))
+        f1s.append(float(s["f1"]))
+        if float(s["f1"]) >= 1.0:
+            perfect += 1
+
+    def _mean(xs: List[float]) -> float:
+        return sum(xs) / len(xs) if xs else float("nan")
+
+    return {
+        "precision": _mean(precisions),
+        "recall": _mean(recalls),
+        "f1": _mean(f1s),
+        "perfect_rate": perfect / len(images),
     }

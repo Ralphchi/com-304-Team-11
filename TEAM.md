@@ -125,6 +125,12 @@ its budget per proposal Section VI.
 
 ### Week 3 — Ablations + evaluation
 
+Pre-flight on a SCITAS login node:
+
+```bash
+HF_HOME=/work/com-304/hf_cache python scripts/prefetch_eval_models.py
+```
+
 Nine ablation configs to be created from the main configs by fixing a
 single masking parameter:
 
@@ -134,22 +140,32 @@ single masking parameter:
 | V2      | `context_block_sizes` | `[4]`, `[5]`, `[6]` |
 | V3      | `mean_span_length`  | `2`, `3`, `5`     |
 
-After all checkpoints finish:
+After all checkpoints finish, submit one SLURM job per (variant, seed):
 
 ```bash
 for v in baseline block ctxblock span; do
   for seed in 0 1 2; do
-    python run_evaluation.py \
-      --ckpt outputs/nano4M/multiclevr_d6-6w512_${v}/checkpoint-final.safetensors \
-      --config cfgs/nano4M/multiclevr_d6-6w512_${v}.yaml \
-      --num-samples 500 --seed ${seed} \
-      --output results/${v}_seed${seed}.json
+    sbatch submit_eval_job.sh \
+      outputs/nano4M/multiclevr_d6-6w512_${v}/checkpoint-final.safetensors \
+      cfgs/nano4M/multiclevr_d6-6w512_${v}.yaml \
+      results/${v}_seed${seed}.json \
+      ${seed} \
+      A,B,C,D
   done
 done
 ```
 
-Then run paired Wilcoxon + BH-FDR across (4 variants × 4 modalities × 5
-metrics) using `nanofm.evaluation.statistical_tests`.
+Then aggregate + apply paired Wilcoxon + BH-FDR across the full grid:
+
+```bash
+python scripts/aggregate_eval_results.py \
+    --results-dir results/ \
+    --baseline-variant baseline \
+    --output-dir results/
+```
+
+This emits `aggregate_table.csv`, `significance_table.csv`, and
+`comparison_summary.md` (with `*` markers on q < 0.05 metrics).
 
 ### Week 4 — Report
 
@@ -157,21 +173,43 @@ metrics) using `nanofm.evaluation.statistical_tests`.
 
 ---
 
-## Metrics (per modality)
+## Metrics
+
+After integrating the TA's eval feedback the harness reports two families
+of metrics. Each metric answers exactly one question.
+
+### Per-modality reconstruction (proposal Section IV)
+
+For each target modality, the encoder receives all OTHER modalities fully
+visible and the model generates the target.
 
 | Modality    | Primary                                                                                          | Secondary |
 |-------------|--------------------------------------------------------------------------------------------------|-----------|
-| Depth       | AbsRel, RMSE, δ₁                                                                                 |           |
+| Depth       | AbsRel                                                                                           | RMSE, δ₁ |
 | Normals     | Mean angular error (degrees)                                                                     |           |
-| RGB         | SSIM vs Cosmos reconstructions                                                                   | FID (noted unreliable on synthetic CLEVR) |
-| Scene desc  | Per-field accuracy (position ±3 px, shape/color/material exact); `set_match` (Hungarian, order-independent); `exact_sequence` (parsed list equal in order) |           |
+| RGB         | SSIM vs Cosmos reconstructions                                                                   | FID |
+| Scene desc  | Per-field accuracy (position ±3 px, shape/color/material exact)                                  | `set_match`, `exact_sequence`, `parse_rate` |
 
-Reported as mean ± std across 3 generation seeds per variant. The plan's
-"exact-sequence match" is implemented as `exact_sequence` (strict, ordered).
-`set_match` is the same property without the order requirement and is
-reported alongside as a diagnostic — high `set_match` with low
-`exact_sequence` means the model has the right scene contents but wrong
-serialization order.
+### Cross-modal generation (TA's headline ask)
+
+For each task, the encoder receives ONLY the source modality (other
+modalities not given) and the model generates the target.
+
+| Task                       | Primary                                              | Secondary |
+|----------------------------|------------------------------------------------------|-----------|
+| RGB → scene_desc           | `cross/rgb_to_text/llm_alignment` (Qwen judge)       | parser per-field accuracy, `llm_perfect_rate`, `llm_parse_error_rate`, `parser_judge_corr` |
+| scene_desc → RGB           | `cross/text_to_rgb/obj_f1` (GroundingDINO)           | FID, SSIM, `obj_precision`, `obj_recall`, `obj_perfect_rate` |
+
+Reported as mean ± std across 3 generation seeds per variant. Paired
+Wilcoxon + BH-FDR across the full grid via `scripts/aggregate_eval_results.py`.
+
+### Determinism notes
+
+- Model generation is stochastic (τ=1.0); 3 seeds give the variation signal.
+- Qwen judge is deterministic (`do_sample=False, temperature=0`).
+- GroundingDINO and Cosmos decoder are deterministic forward passes.
+- Val iteration is sorted-by-filename, so all variants score the same first
+  N val samples.
 
 ---
 

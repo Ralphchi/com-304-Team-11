@@ -17,6 +17,19 @@ dependencies = [
     "ipykernel",
 ]
 
+[project.optional-dependencies]
+eval = [
+    # Phase C — Qwen LLM-as-judge.
+    "transformers>=4.40",
+    "accelerate",
+    # Phase A/B — image-level metrics.
+    "torchmetrics",
+    "torch-fidelity",
+    "scikit-image",
+    # Optional: 4-bit Qwen quantisation if memory tight.
+    # "bitsandbytes",
+]
+
 [project.urls]
 "Homepage" = "https://vilab.epfl.ch"
 

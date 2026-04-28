@@ -21,7 +21,7 @@ import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -43,16 +43,13 @@ from .metrics import (
 class EvalResults:
     """Aggregated metrics across all evaluated samples."""
     num_samples: int = 0
-    # Depth
+    # Phase A — per-modality reconstruction
     depth_absrel: float = float("nan")
     depth_rmse: float = float("nan")
     depth_delta1: float = float("nan")
-    # Normals
     normals_angular_error: float = float("nan")
-    # RGB
     rgb_ssim: float = float("nan")
     rgb_fid: float = float("nan")
-    # Scene desc
     scene_desc_position: float = float("nan")
     scene_desc_shape: float = float("nan")
     scene_desc_color: float = float("nan")
@@ -60,7 +57,28 @@ class EvalResults:
     scene_desc_set_match: float = float("nan")
     scene_desc_exact_sequence: float = float("nan")
     scene_desc_parse_rate: float = float("nan")
-    # Extras (cross-modal metrics live here in later phases)
+    # Phase B — cross-modal RGB → scene_desc (parser side)
+    cross_rgb_to_text_position: float = float("nan")
+    cross_rgb_to_text_shape: float = float("nan")
+    cross_rgb_to_text_color: float = float("nan")
+    cross_rgb_to_text_material: float = float("nan")
+    cross_rgb_to_text_set_match: float = float("nan")
+    cross_rgb_to_text_exact_sequence: float = float("nan")
+    cross_rgb_to_text_parse_rate: float = float("nan")
+    # Phase C — LLM judge on cross-modal RGB → scene_desc
+    cross_rgb_to_text_llm_alignment: float = float("nan")
+    cross_rgb_to_text_llm_perfect_rate: float = float("nan")
+    cross_rgb_to_text_llm_parse_error_rate: float = float("nan")
+    cross_rgb_to_text_parser_judge_corr: float = float("nan")
+    # Phase B — cross-modal scene_desc → RGB (image-quality side)
+    cross_text_to_rgb_ssim: float = float("nan")
+    cross_text_to_rgb_fid: float = float("nan")
+    # Phase D — object-detection verifier on cross-modal scene_desc → RGB
+    cross_text_to_rgb_obj_precision: float = float("nan")
+    cross_text_to_rgb_obj_recall: float = float("nan")
+    cross_text_to_rgb_obj_f1: float = float("nan")
+    cross_text_to_rgb_obj_perfect_rate: float = float("nan")
+    # Extras (anything not in the schema above)
     extras: Dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, float]:
@@ -79,6 +97,23 @@ class EvalResults:
             "scene_desc/set_match": self.scene_desc_set_match,
             "scene_desc/exact_sequence": self.scene_desc_exact_sequence,
             "scene_desc/parse_rate": self.scene_desc_parse_rate,
+            "cross/rgb_to_text/position": self.cross_rgb_to_text_position,
+            "cross/rgb_to_text/shape": self.cross_rgb_to_text_shape,
+            "cross/rgb_to_text/color": self.cross_rgb_to_text_color,
+            "cross/rgb_to_text/material": self.cross_rgb_to_text_material,
+            "cross/rgb_to_text/set_match": self.cross_rgb_to_text_set_match,
+            "cross/rgb_to_text/exact_sequence": self.cross_rgb_to_text_exact_sequence,
+            "cross/rgb_to_text/parse_rate": self.cross_rgb_to_text_parse_rate,
+            "cross/rgb_to_text/llm_alignment": self.cross_rgb_to_text_llm_alignment,
+            "cross/rgb_to_text/llm_perfect_rate": self.cross_rgb_to_text_llm_perfect_rate,
+            "cross/rgb_to_text/llm_parse_error_rate": self.cross_rgb_to_text_llm_parse_error_rate,
+            "cross/rgb_to_text/parser_judge_corr": self.cross_rgb_to_text_parser_judge_corr,
+            "cross/text_to_rgb/ssim": self.cross_text_to_rgb_ssim,
+            "cross/text_to_rgb/fid": self.cross_text_to_rgb_fid,
+            "cross/text_to_rgb/obj_precision": self.cross_text_to_rgb_obj_precision,
+            "cross/text_to_rgb/obj_recall": self.cross_text_to_rgb_obj_recall,
+            "cross/text_to_rgb/obj_f1": self.cross_text_to_rgb_obj_f1,
+            "cross/text_to_rgb/obj_perfect_rate": self.cross_text_to_rgb_obj_perfect_rate,
         }
         d.update(self.extras)
         return d
@@ -178,6 +213,10 @@ class EvalHarness:
         seed: int = 0,
         sample_steps: int = 8,
         temperature: float = 1.0,
+        phases: frozenset = frozenset({"A"}),
+        cache_dir: Optional[Path] = None,
+        llm_judge=None,
+        rgb_verifier=None,
     ) -> EvalResults:
         if self.model is None:
             raise RuntimeError("EvalHarness.load() must be called before .run().")
@@ -188,12 +227,18 @@ class EvalHarness:
         np.random.seed(seed)
 
         n = min(num_samples, len(self.dataset))
-        # Per-modality predicted and GT token tensors, in val-iteration order.
+        if cache_dir is not None:
+            cache_dir = Path(cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Phase A: per-modality reconstruction (always runs; loads model context).
         preds: Dict[str, List[torch.Tensor]] = {m: [] for m in self.modalities}
         gts: Dict[str, List[torch.Tensor]] = {m: [] for m in self.modalities}
+        samples: List[Dict[str, torch.Tensor]] = []
 
         for sample_idx in self._iter_val_indices(n):
             sample = self.dataset[sample_idx]
+            samples.append(sample)
             for target_mod in self.modalities:
                 ctx_tokens, ctx_positions, ctx_modalities = self._build_full_context(
                     sample, target_mod
@@ -211,7 +256,37 @@ class EvalHarness:
                 preds[target_mod].append(pred_tokens.squeeze(0).cpu())
                 gts[target_mod].append(sample[target_mod].cpu())
 
-        return self._aggregate(preds, gts, n)
+        results = self._aggregate(preds, gts, n)
+
+        # Phase B: cross-modal generation. Produces (gt_caption, gen_caption,
+        # gen_rgb) tuples per sample. C and D consume these.
+        cross_outputs = None
+        if "B" in phases or "C" in phases or "D" in phases:
+            cross_outputs = self._run_phase_b(
+                samples=samples,
+                sample_steps=sample_steps,
+                temperature=temperature,
+                cache_dir=cache_dir,
+            )
+            self._fill_phase_b_metrics(results, cross_outputs)
+
+        # Phase C: LLM-as-judge on (gt_caption, gen_caption) pairs.
+        if "C" in phases:
+            if llm_judge is None:
+                raise RuntimeError(
+                    "Phase C requires an llm_judge (LLMJudge instance)."
+                )
+            self._fill_phase_c_metrics(results, cross_outputs, llm_judge)
+
+        # Phase D: object-detection verifier on generated RGB images.
+        if "D" in phases:
+            if rgb_verifier is None:
+                raise RuntimeError(
+                    "Phase D requires an rgb_verifier (RGBVerifier instance)."
+                )
+            self._fill_phase_d_metrics(results, cross_outputs, rgb_verifier)
+
+        return results
 
     # ---------------------------------------------------- val iteration
 
@@ -403,3 +478,223 @@ class EvalHarness:
         n = 2.0 * img - 1.0
         norm = n.norm(dim=1, keepdim=True).clamp(min=1e-6)
         return n / norm
+
+    # ----------------------------------------------------- cross-modal context
+
+    def _build_single_modality_context(
+        self, sample: Dict[str, torch.Tensor], source_mod: str
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Encoder context = ONLY source_mod's full token sequence.
+
+        Returns the same (1, N) shape tensors as `_build_full_context` but
+        with N = max_seq_lens[source_mod_idx]. Used by Phase B for the
+        RGB-only and text-only conditioning setups.
+        """
+        if source_mod not in self.modalities:
+            raise ValueError(f"Unknown source modality: {source_mod}")
+        mod_idx = self.modalities.index(source_mod)
+        cumulative_shifts = self._max_seq_len_shifts()
+
+        mod_tokens = sample[source_mod].to(self.device).long()
+        n = int(mod_tokens.shape[0])
+        assert n == self.max_seq_lens[mod_idx]
+
+        shift = 0 if self.overlap_posembs else cumulative_shifts[mod_idx]
+        positions = torch.arange(n, device=self.device, dtype=torch.long) + shift
+        modalities = torch.full(
+            (n,), mod_idx, device=self.device, dtype=torch.long
+        )
+
+        return mod_tokens.unsqueeze(0), positions.unsqueeze(0), modalities.unsqueeze(0)
+
+    # --------------------------------------------------- Phase B (cross-modal)
+
+    @torch.no_grad()
+    def _run_phase_b(
+        self,
+        samples: List[Dict[str, torch.Tensor]],
+        sample_steps: int,
+        temperature: float,
+        cache_dir: Optional[Path],
+    ) -> Dict[str, list]:
+        """Generate RGB → caption and caption → RGB outputs for every sample.
+
+        Returns a dict with five aligned lists, length n:
+            gt_captions       : List[str] (decoded GT scene_desc)
+            gen_captions      : List[str] (decoded model output)
+            gt_rgb            : List[Tensor (3, H, W) in [0, 1]]
+            gen_rgb           : List[Tensor (3, H, W) in [0, 1]]
+            gt_scene_objects  : List[List[SceneObject]] (parsed GT)
+        """
+        rgb_mod = next(
+            (m for m in self.image_modalities if m.startswith("tok_rgb")), None
+        )
+        if rgb_mod is None or "scene_desc" not in self.modalities:
+            # Cross-modal RGB↔text only meaningful when both modalities present.
+            return {
+                "gt_captions": [],
+                "gen_captions": [],
+                "gt_rgb": [],
+                "gen_rgb": [],
+                "gt_scene_objects": [],
+            }
+
+        gt_captions: List[str] = []
+        gen_captions: List[str] = []
+        gen_rgb_tokens: List[torch.Tensor] = []
+        gt_rgb_tokens: List[torch.Tensor] = []
+        gt_scene_objects = []
+
+        for sample in samples:
+            # RGB → scene_desc.
+            ctx_t, ctx_p, ctx_m = self._build_single_modality_context(sample, rgb_mod)
+            text_pred, _, _, _ = self.model.generate_one_modality_roar(
+                enc_input_tokens=ctx_t,
+                enc_input_positions=ctx_p,
+                enc_input_modalities=ctx_m,
+                target_mod="scene_desc",
+                num_steps=sample_steps,
+                temp=temperature,
+                top_p=0.0,
+                top_k=0.0,
+            )
+            gen_captions.append(self._decode_text_tokens(text_pred.squeeze(0).cpu()))
+            gt_captions.append(self._decode_text_tokens(sample["scene_desc"].cpu()))
+
+            # scene_desc → RGB.
+            ctx_t, ctx_p, ctx_m = self._build_single_modality_context(sample, "scene_desc")
+            rgb_pred, _, _, _ = self.model.generate_one_modality_roar(
+                enc_input_tokens=ctx_t,
+                enc_input_positions=ctx_p,
+                enc_input_modalities=ctx_m,
+                target_mod=rgb_mod,
+                num_steps=sample_steps,
+                temp=temperature,
+                top_p=0.0,
+                top_k=0.0,
+            )
+            gen_rgb_tokens.append(rgb_pred.squeeze(0).cpu())
+            gt_rgb_tokens.append(sample[rgb_mod].cpu())
+
+        # Decode RGB tokens in batches of 8 (Cosmos memory pressure).
+        gen_rgb_imgs = self._decode_in_batches(gen_rgb_tokens, batch=8)
+        gt_rgb_imgs = self._decode_in_batches(gt_rgb_tokens, batch=8)
+
+        # Parse GT captions for Phase D's expected_objects.
+        gt_scene_objects = [parse_scene_description(s) for s in gt_captions]
+
+        out = {
+            "gt_captions": gt_captions,
+            "gen_captions": gen_captions,
+            "gt_rgb": gt_rgb_imgs,
+            "gen_rgb": gen_rgb_imgs,
+            "gt_scene_objects": gt_scene_objects,
+        }
+
+        if cache_dir is not None:
+            self._cache_phase_b(out, cache_dir)
+
+        return out
+
+    def _decode_in_batches(
+        self, token_list: List[torch.Tensor], batch: int = 8
+    ) -> List[torch.Tensor]:
+        """Decode a list of (256,) RGB token tensors via Cosmos in batches."""
+        out: List[torch.Tensor] = []
+        for start in range(0, len(token_list), batch):
+            chunk = torch.stack(token_list[start:start + batch], dim=0)
+            decoded = self._decode_image_tokens(chunk).cpu()
+            for i in range(decoded.shape[0]):
+                out.append(decoded[i])
+        return out
+
+    def _cache_phase_b(self, outputs: Dict[str, list], cache_dir: Path) -> None:
+        """Persist generated captions and images for inspection."""
+        text_dir = cache_dir / "rgb_to_text"
+        rgb_dir = cache_dir / "text_to_rgb"
+        text_dir.mkdir(parents=True, exist_ok=True)
+        rgb_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, (gt, gen) in enumerate(zip(outputs["gt_captions"], outputs["gen_captions"])):
+            (text_dir / f"sample_{i:04d}_gt.txt").write_text(gt)
+            (text_dir / f"sample_{i:04d}_gen.txt").write_text(gen)
+
+        try:
+            from torchvision.utils import save_image  # type: ignore
+            for i, (gt, gen) in enumerate(zip(outputs["gt_rgb"], outputs["gen_rgb"])):
+                save_image(gt, rgb_dir / f"sample_{i:04d}_gt.png")
+                save_image(gen, rgb_dir / f"sample_{i:04d}_gen.png")
+        except ImportError:
+            # torchvision missing; skip image dumping (metrics still computed).
+            pass
+
+    def _fill_phase_b_metrics(self, results: EvalResults, outputs: Dict[str, list]) -> None:
+        """Score Phase B outputs with parser per-field accuracy + SSIM/FID."""
+        if not outputs["gen_captions"]:
+            return
+
+        # RGB → text: parser per-field on (gen_caption, gt_caption).
+        gen_objs = [parse_scene_description(s) for s in outputs["gen_captions"]]
+        gt_objs = outputs["gt_scene_objects"]
+        scores = scene_desc_per_field_accuracy(gen_objs, gt_objs)
+        results.cross_rgb_to_text_position = scores["position"]
+        results.cross_rgb_to_text_shape = scores["shape"]
+        results.cross_rgb_to_text_color = scores["color"]
+        results.cross_rgb_to_text_material = scores["material"]
+        results.cross_rgb_to_text_set_match = scores["set_match"]
+        results.cross_rgb_to_text_exact_sequence = scores["exact_sequence"]
+        nonempty_gt = sum(1 for o in gt_objs if len(o) > 0)
+        nonempty_gen = sum(1 for o in gen_objs if len(o) > 0)
+        results.cross_rgb_to_text_parse_rate = nonempty_gen / max(nonempty_gt, 1)
+
+        # text → RGB: SSIM + FID.
+        gen_rgb = torch.stack(outputs["gen_rgb"], dim=0)
+        gt_rgb = torch.stack(outputs["gt_rgb"], dim=0)
+        results.cross_text_to_rgb_ssim = rgb_ssim(gen_rgb, gt_rgb)
+        try:
+            results.cross_text_to_rgb_fid = rgb_fid(gen_rgb, gt_rgb)
+        except Exception:
+            results.cross_text_to_rgb_fid = float("nan")
+
+    # ----------------------------------------------------------------- Phase C
+
+    def _fill_phase_c_metrics(
+        self, results: EvalResults, outputs: Dict[str, list], llm_judge
+    ) -> None:
+        """Run Qwen LLM-judge on the cross-modal RGB → text outputs."""
+        from .metrics import caption_llm_judge
+
+        scores = caption_llm_judge(
+            originals=outputs["gt_captions"],
+            generateds=outputs["gen_captions"],
+            judge=llm_judge,
+            parser_set_match=[
+                1.0 if (len(g) == len(gt) and len(g) > 0) else 0.0
+                for g, gt in zip(
+                    [parse_scene_description(s) for s in outputs["gen_captions"]],
+                    outputs["gt_scene_objects"],
+                )
+            ],
+        )
+        results.cross_rgb_to_text_llm_alignment = scores["llm_alignment"]
+        results.cross_rgb_to_text_llm_perfect_rate = scores["llm_perfect_rate"]
+        results.cross_rgb_to_text_llm_parse_error_rate = scores["llm_parse_error_rate"]
+        results.cross_rgb_to_text_parser_judge_corr = scores["parser_judge_corr"]
+
+    # ----------------------------------------------------------------- Phase D
+
+    def _fill_phase_d_metrics(
+        self, results: EvalResults, outputs: Dict[str, list], rgb_verifier
+    ) -> None:
+        """Run object-detection verifier on generated RGB images."""
+        from .metrics import rgb_object_detection_score
+
+        scores = rgb_object_detection_score(
+            images=outputs["gen_rgb"],
+            expected_lists=outputs["gt_scene_objects"],
+            verifier=rgb_verifier,
+        )
+        results.cross_text_to_rgb_obj_precision = scores["precision"]
+        results.cross_text_to_rgb_obj_recall = scores["recall"]
+        results.cross_text_to_rgb_obj_f1 = scores["f1"]
+        results.cross_text_to_rgb_obj_perfect_rate = scores["perfect_rate"]

@@ -64,7 +64,19 @@ def parse_args() -> argparse.Namespace:
                    help="If given, write JSON results to this file (otherwise stdout).")
     p.add_argument("--phases", type=parse_phases, default="A",
                    help="Comma-separated phases to run (e.g. A or A,B,C,D). "
-                        "Phase A is required. Phases B/C/D land in later sessions.")
+                        "Phase A always runs (per-modality reconstruction).")
+    p.add_argument("--llm-judge-model", type=str, default="Qwen/Qwen3-8B-Instruct",
+                   choices=["Qwen/Qwen3-8B-Instruct", "Qwen/Qwen3-4B-Instruct",
+                            "Qwen/Qwen3-1.7B-Instruct"],
+                   help="Qwen model name for the LLM judge (Phase C).")
+    p.add_argument("--llm-judge-4bit", action="store_true",
+                   help="Load Qwen in 4-bit quantisation (requires bitsandbytes).")
+    p.add_argument("--detector-model", type=str,
+                   default="IDEA-Research/grounding-dino-tiny",
+                   help="HuggingFace model id for the object-detection verifier (Phase D).")
+    p.add_argument("--cache-dir", type=Path, default=None,
+                   help="If given, cache Phase B generated outputs (captions + RGB) "
+                        "for inspection in this directory.")
     return p.parse_args()
 
 
@@ -78,25 +90,39 @@ def main() -> int:
         print(f"Config not found: {args.config}", file=sys.stderr)
         return 1
 
-    not_yet_implemented = args.phases - {"A"}
-    if not_yet_implemented:
-        print(
-            f"Phases {sorted(not_yet_implemented)} are not yet implemented; "
-            f"running Phase A only. See plan in /Users/ralphchidiac/.claude/plans.",
-            file=sys.stderr,
-        )
-
     harness = EvalHarness(
         checkpoint_path=str(args.ckpt),
         config_path=str(args.config),
         device=args.device,
     )
     harness.load()
+
+    llm_judge = None
+    if "C" in args.phases:
+        from nanofm.evaluation.llm_judge import LLMJudge
+        llm_judge = LLMJudge(
+            model_name=args.llm_judge_model,
+            device=args.device,
+            load_in_4bit=args.llm_judge_4bit,
+        )
+
+    rgb_verifier = None
+    if "D" in args.phases:
+        from nanofm.evaluation.rgb_verifier import RGBVerifier
+        rgb_verifier = RGBVerifier(
+            model_name=args.detector_model,
+            device=args.device,
+        )
+
     results = harness.run(
         num_samples=args.num_samples,
         seed=args.seed,
         sample_steps=args.sample_steps,
         temperature=args.temperature,
+        phases=frozenset(args.phases),
+        cache_dir=args.cache_dir,
+        llm_judge=llm_judge,
+        rgb_verifier=rgb_verifier,
     )
 
     out_json = json.dumps(results.as_dict(), indent=2)
