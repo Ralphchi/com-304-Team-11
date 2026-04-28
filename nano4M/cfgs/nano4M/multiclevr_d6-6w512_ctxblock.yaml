@@ -36,7 +36,7 @@ save_ckpt_freq: 1000
 
 log_wandb: True
 wandb_project: COM304_nano4M_extension
-wandb_entity: ralph-chidiac-epfl
+wandb_entity: Com304-team11
 wandb_run_name: auto
 
 model_config:
