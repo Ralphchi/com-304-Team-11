@@ -1,5 +1,11 @@
-# Variant 2 (V2): span masking on scene_desc, baseline random masking on images.
-# Owned by Ricardo. See proposal Section III.
+# Variant 3 (V3): span masking on scene_desc, baseline random masking on images.
+# Owned by Ricardo. See proposal Section III.V3.
+#
+# scene_desc gets contiguous span masks: span lengths drawn from a geometric
+# distribution with mean mu=3 (matching the median tokenised length of CLEVR
+# Field:value phrases). Spans are placed at random starts without overlap; if
+# a sampled length exceeds the remaining target budget it is trimmed to fit.
+# Image modalities (RGB, depth, normals) keep baseline random masking.
 
 run_name: multiclevr_d6-6w512_span
 output_dir: ./outputs/auto
@@ -13,25 +19,6 @@ global_vars:
   target_alphas: [1.0, 1.0, 1.0, 1.0]
   input_tokens_range: [1, 128]
   target_tokens_range: [1, 128]
-
-# ============================================================
-# MASKING STRATEGY — V2 SPAN MASKING  (Ricardo, Week 1)
-# ============================================================
-# Implement `SpanMasking` in nanofm/data/multimodal/masking.py with:
-#   - For scene_desc: sample span lengths from a geometric distribution
-#     (mean mu = 3, following T5). Place spans at random start positions
-#     without overlap until target count is reached.
-#   - Image modalities retain baseline random masking.
-# Then extend create_multimodal_masked_dataloader to accept a `masking` dict.
-#
-# Placeholder block (fill in once the factory supports it):
-#
-# masking:
-#   _target_: nanofm.data.multimodal.masking.SpanMasking
-#   text_modalities: ["scene_desc"]
-#   image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
-#   mean_span_length: 3
-# ============================================================
 
 batch_size: ${global_vars.batch_size}
 total_tokens: 5000
@@ -47,8 +34,8 @@ eval_freq: 100
 save_ckpt_freq: 1000
 
 log_wandb: True
-wandb_project: COM304_nano4M_extension
-wandb_entity: ralph-chidiac-epfl
+wandb_project: nano4M-masking
+wandb_entity: Com304-team11
 wandb_run_name: auto
 
 model_config:
@@ -93,6 +80,11 @@ train_loader_config:
   shuffle: True
   drop_last: True
   distributed: True
+  masking:
+    _target_: nanofm.data.multimodal.span_masking.SpanMasking
+    text_modalities: ["scene_desc"]
+    image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
+    mean_span_length: 3
 
 eval_loader_config:
   _target_: nanofm.data.multimodal.create_multimodal_masked_dataloader
@@ -115,3 +107,8 @@ eval_loader_config:
   shuffle: False
   drop_last: False
   distributed: True
+  masking:
+    _target_: nanofm.data.multimodal.span_masking.SpanMasking
+    text_modalities: ["scene_desc"]
+    image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
+    mean_span_length: 3
