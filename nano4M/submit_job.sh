@@ -7,8 +7,8 @@
 #SBATCH --mem=16G
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4               # Adjust CPU allocation if needed
-#SBATCH --output=interactive_job.out    # Output log file
-#SBATCH --error=interactive_job.err     # Error log file
+#SBATCH --output=logs/train_%x_%j.out   # Per-job output (%x=name, %j=jobid)
+#SBATCH --error=logs/train_%x_%j.err    # Per-job error
 #SBATCH --partition=l40s
 
 CONFIG_FILE=$1
