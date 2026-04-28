@@ -110,6 +110,7 @@ def test_scene_desc_perfect_match():
     assert r["shape"] == 1.0
     assert r["color"] == 1.0
     assert r["material"] == 1.0
+    assert r["set_match"] == 1.0
     assert r["exact_sequence"] == 1.0
 
 
@@ -121,6 +122,7 @@ def test_scene_desc_all_wrong():
     assert r["shape"] == 0.0
     assert r["color"] == 0.0
     assert r["material"] == 0.0
+    assert r["set_match"] == 0.0
     assert r["exact_sequence"] == 0.0
 
 
@@ -136,7 +138,42 @@ def test_scene_desc_extra_prediction_counts_as_miss():
     r = scene_desc_per_field_accuracy(preds, gts)
     # The 1 GT object is perfectly matched; totals are per-GT so ratio is still 1.0.
     assert r["shape"] == 1.0
-    # But exact_sequence is False because lengths differ.
+    # But neither whole-match metric passes (lengths differ).
+    assert r["set_match"] == 0.0
+    assert r["exact_sequence"] == 0.0
+
+
+def test_scene_desc_set_match_passes_when_order_differs():
+    # Same set of objects but emitted in reverse order: set_match=1, exact_sequence=0.
+    a = SceneObject(x=0, y=0, shape="cube", color="blue", material="metal")
+    b = SceneObject(x=20, y=20, shape="sphere", color="red", material="rubber")
+    preds = [[b, a]]
+    gts = [[a, b]]
+    r = scene_desc_per_field_accuracy(preds, gts)
+    assert r["set_match"] == 1.0
+    assert r["exact_sequence"] == 0.0
+    assert r["shape"] == 1.0
+    assert r["color"] == 1.0
+    assert r["material"] == 1.0
+
+
+def test_scene_desc_exact_sequence_requires_ordered_fields_correct():
+    # Two GT objects in the same canonical order; predicted list has the
+    # right shapes per slot but the colors are swapped between slots.
+    gts = [[
+        SceneObject(x=0, y=0, shape="cube", color="blue", material="metal"),
+        SceneObject(x=20, y=20, shape="sphere", color="red", material="rubber"),
+    ]]
+    preds = [[
+        SceneObject(x=0, y=0, shape="cube", color="red", material="metal"),
+        SceneObject(x=20, y=20, shape="sphere", color="blue", material="rubber"),
+    ]]
+    r = scene_desc_per_field_accuracy(preds, gts)
+    # Hungarian matches by position, so set_match passes for shape only.
+    assert r["shape"] == 1.0
+    # But colors are wrong on every pair, so neither whole-match metric passes.
+    assert r["color"] == 0.0
+    assert r["set_match"] == 0.0
     assert r["exact_sequence"] == 0.0
 
 

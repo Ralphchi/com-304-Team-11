@@ -170,58 +170,47 @@ def scene_desc_per_field_accuracy(
     ground_truth: Sequence[List[SceneObject]],
     position_tolerance_px: int = 3,
 ) -> Dict[str, float]:
-    """Per-field accuracy after Hungarian-matching objects by position.
+    """Per-field accuracy after Hungarian-matching objects by position,
+    plus two scene-level whole-match metrics.
 
-    For each sample in the batch:
+    Per-field flow (per sample):
     1. Hungarian-match predicted to GT objects by 2D position.
     2. For each matched pair, count per-field correctness:
        - position: True if |dx| <= tol and |dy| <= tol
-       - shape / color / material: True iff exact string match
-    3. Unmatched objects count as all fields wrong for that object.
+       - shape / color / material: exact string match
+    3. Unmatched objects count as all fields wrong (totals counted per GT).
 
-    Returns dict: {"position": float, "shape": float, "color": float,
-                  "material": float, "exact_sequence": float}
+    Returns dict with five entries:
+        position, shape, color, material  -- micro-averaged over GT objects
+        set_match                          -- fraction of samples where the
+            sets of objects match: same length AND Hungarian matches all
+            pairs AND every field correct on every pair. Order-independent.
+        exact_sequence                     -- fraction of samples where
+            the predicted parsed list equals the GT parsed list IN ORDER:
+            same length AND for every i, pred[i] matches gt[i] field-by-field
+            (with the same position tolerance). Stricter than set_match.
 
-    - All non-exact_sequence entries are micro-averaged across objects
-      across all samples.
-
-    exact_sequence semantics
-    ------------------------
-    Defined here as: same length AND every predicted object matched
-    one-to-one with a GT object via the Hungarian matcher AND every field
-    correct on every pair. **Order-independent** — the predicted objects
-    may appear in any order relative to GT, since the Hungarian matcher
-    aligns them by position.
-
-    The proposal (Section IV) says "plus exact-sequence match" which is
-    ambiguous between this order-independent reading, an order-preserving
-    reading (objects must appear in GT order after sorting by position),
-    and a string-identical reading (decoded pred string == GT string).
-    Team clarification pending (asked 2026-04-21); if the team picks a
-    different interpretation, update this function accordingly.
-
-    Parameters
-    ----------
-    predicted : list of list of SceneObject, one per sample
-    ground_truth : list of list of SceneObject, one per sample
-    position_tolerance_px : int
-        Position is "correct" when |dx|<=tol AND |dy|<=tol (proposal spec).
+    Reporting both lets us distinguish "got the scene contents right but
+    in a different order" (set_match high, exact_sequence low) from
+    "got everything right" (both high). Plan Section IV says
+    "per-field accuracy ... plus exact-sequence match"; we expose set_match
+    as a complementary order-independent signal for diagnostic purposes.
     """
     assert len(predicted) == len(ground_truth), "predicted/gt must align by sample"
     totals = {"position": 0, "shape": 0, "color": 0, "material": 0}
     correct = {"position": 0, "shape": 0, "color": 0, "material": 0}
+    set_match_correct = 0
     exact_sequence_correct = 0
 
     for pred, gt in zip(predicted, ground_truth):
         result = match_objects(pred, gt)
 
-        # Count every GT object in the totals (unmatched GT -> 0 correct).
         totals["position"] += len(gt)
         totals["shape"] += len(gt)
         totals["color"] += len(gt)
         totals["material"] += len(gt)
 
-        all_correct = (len(pred) == len(gt)) and (
+        is_set_match = (len(pred) == len(gt)) and (
             len(result.unmatched_pred) == 0 and len(result.unmatched_gt) == 0
         )
 
@@ -239,9 +228,22 @@ def scene_desc_per_field_accuracy(
                 correct["material"] += 1
             if not (pos_ok and p.shape == g.shape and p.color == g.color
                     and p.material == g.material):
-                all_correct = False
+                is_set_match = False
 
-        if all_correct:
+        if is_set_match:
+            set_match_correct += 1
+
+        # exact_sequence: predicted list equals GT list in order, with the
+        # same per-field tolerance as the rest of the metrics.
+        is_exact_sequence = len(pred) == len(gt) and all(
+            abs(p.x - g.x) <= position_tolerance_px
+            and abs(p.y - g.y) <= position_tolerance_px
+            and p.shape == g.shape
+            and p.color == g.color
+            and p.material == g.material
+            for p, g in zip(pred, gt)
+        )
+        if is_exact_sequence:
             exact_sequence_correct += 1
 
     def _safe_div(a: int, b: int) -> float:
@@ -252,5 +254,6 @@ def scene_desc_per_field_accuracy(
         "shape": _safe_div(correct["shape"], totals["shape"]),
         "color": _safe_div(correct["color"], totals["color"]),
         "material": _safe_div(correct["material"], totals["material"]),
+        "set_match": _safe_div(set_match_correct, len(predicted)),
         "exact_sequence": _safe_div(exact_sequence_correct, len(predicted)),
     }

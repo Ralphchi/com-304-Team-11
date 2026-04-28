@@ -53,6 +53,7 @@ class EvalResults:
     scene_desc_shape: float = float("nan")
     scene_desc_color: float = float("nan")
     scene_desc_material: float = float("nan")
+    scene_desc_set_match: float = float("nan")
     scene_desc_exact_sequence: float = float("nan")
     # Extras (filled opportunistically)
     extras: Dict[str, float] = field(default_factory=dict)
@@ -70,6 +71,7 @@ class EvalResults:
             "scene_desc/shape": self.scene_desc_shape,
             "scene_desc/color": self.scene_desc_color,
             "scene_desc/material": self.scene_desc_material,
+            "scene_desc/set_match": self.scene_desc_set_match,
             "scene_desc/exact_sequence": self.scene_desc_exact_sequence,
         }
         d.update(self.extras)
