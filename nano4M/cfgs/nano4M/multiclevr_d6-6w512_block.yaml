@@ -1,12 +1,4 @@
-# Variant 1 (V1): block masking on image-like modalities (RGB, depth, normals),
-# baseline random masking on scene_desc.
-# Owned by Nacer. See proposal Section III.V1.
-#
-# Each image modality's 256-token sequence is reshaped to a 16x16 grid;
-# block size s is drawn uniformly from {2, 3, 4} per (sample, modality);
-# s x s blocks are placed at random grid positions until the per-modality
-# Dirichlet budget N is reached, with the final block trimmed to match N
-# exactly. scene_desc keeps baseline random masking.
+# V1 block masking on image modalities, random masking on scene_desc.
 
 run_name: multiclevr_d6-6w512_block
 output_dir: ./outputs/auto
