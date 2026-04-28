@@ -65,9 +65,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--phases", type=parse_phases, default="A",
                    help="Comma-separated phases to run (e.g. A or A,B,C,D). "
                         "Phase A always runs (per-modality reconstruction).")
-    p.add_argument("--llm-judge-model", type=str, default="Qwen/Qwen3-8B-Instruct",
-                   choices=["Qwen/Qwen3-8B-Instruct", "Qwen/Qwen3-4B-Instruct",
-                            "Qwen/Qwen3-1.7B-Instruct"],
+    p.add_argument("--llm-judge-model", type=str, default="Qwen/Qwen3-8B",
+                   choices=["Qwen/Qwen3-8B", "Qwen/Qwen3-4B", "Qwen/Qwen3-1.7B"],
                    help="Qwen model name for the LLM judge (Phase C).")
     p.add_argument("--llm-judge-4bit", action="store_true",
                    help="Load Qwen in 4-bit quantisation (requires bitsandbytes).")

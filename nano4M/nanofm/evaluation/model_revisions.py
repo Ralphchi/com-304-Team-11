@@ -5,8 +5,9 @@ as None to fetch the latest, but pin before running the headline eval so
 results are reproducible.
 """
 
-# Qwen LLM judge
-QWEN_REPO = "Qwen/Qwen3-8B-Instruct"
+# Qwen LLM judge. Qwen3 series drops the "-Instruct" suffix; the base model
+# is already instruction-tuned. Confirmed available on HuggingFace 2026-04-28.
+QWEN_REPO = "Qwen/Qwen3-8B"
 QWEN_REVISION: str | None = None  # pin a commit SHA before the headline eval
 
 # GroundingDINO object-detection verifier
