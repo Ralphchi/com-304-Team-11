@@ -49,11 +49,16 @@ DEFAULT_THRESHOLD = 0.8
 
 
 def load_cosmos(device: str):
+    import os
     from huggingface_hub import snapshot_download
     from cosmos_tokenizer.image_lib import ImageTokenizer
 
     repo_id = "nvidia/Cosmos-0.1-Tokenizer-DI16x16"
-    local_dir = "/tmp/nvidia/Cosmos-0.1-Tokenizer-DI16x16"
+    # Persistent scratch so we don't re-download on every compute node.
+    base = os.environ.get("COSMOS_LOCAL_DIR") or os.path.expanduser(
+        "~/cosmos_tokenizer"
+    )
+    local_dir = f"{base}/Cosmos-0.1-Tokenizer-DI16x16"
     snapshot_download(repo_id=repo_id, local_dir=local_dir)
     return ImageTokenizer(
         checkpoint_enc=f"{local_dir}/encoder.jit",
