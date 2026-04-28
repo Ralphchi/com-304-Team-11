@@ -1,6 +1,12 @@
 # Variant 1 (V1): block masking on image-like modalities (RGB, depth, normals),
 # baseline random masking on scene_desc.
-# Owned by Nacer. See proposal Section III.
+# Owned by Nacer. See proposal Section III.V1.
+#
+# Each image modality's 256-token sequence is reshaped to a 16x16 grid;
+# block size s is drawn uniformly from {2, 3, 4} per (sample, modality);
+# s x s blocks are placed at random grid positions until the per-modality
+# Dirichlet budget N is reached, with the final block trimmed to match N
+# exactly. scene_desc keeps baseline random masking.
 
 run_name: multiclevr_d6-6w512_block
 output_dir: ./outputs/auto
@@ -14,28 +20,6 @@ global_vars:
   target_alphas: [1.0, 1.0, 1.0, 1.0]
   input_tokens_range: [1, 128]
   target_tokens_range: [1, 128]
-
-# ============================================================
-# MASKING STRATEGY — V1 BLOCK MASKING  (Nacer, Week 1)
-# ============================================================
-# Implement `BlockMasking` in nanofm/data/multimodal/masking.py with:
-#   - Reshape 256-token sequence to 16x16 grid for image-like modalities.
-#   - Sample block size s uniformly from {2, 3, 4}.
-#   - Place blocks at random grid positions until masked count >= target N;
-#     overlap allowed; realised count in [N, N + s^2 - 1].
-#   - scene_desc retains baseline random masking.
-# Then extend create_multimodal_masked_dataloader to accept a `masking`
-# dict (or equivalent) and wire it up here.
-#
-# Placeholder block (fill in once the factory supports it):
-#
-# masking:
-#   _target_: nanofm.data.multimodal.masking.BlockMasking
-#   image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
-#   text_modalities: ["scene_desc"]
-#   grid_size: 16
-#   block_sizes: [2, 3, 4]
-# ============================================================
 
 batch_size: ${global_vars.batch_size}
 total_tokens: 5000
@@ -97,6 +81,12 @@ train_loader_config:
   shuffle: True
   drop_last: True
   distributed: True
+  masking:
+    _target_: nanofm.data.multimodal.block_masking.BlockMasking
+    image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
+    text_modalities: ["scene_desc"]
+    grid_size: 16
+    block_sizes: [2, 3, 4]
 
 eval_loader_config:
   _target_: nanofm.data.multimodal.create_multimodal_masked_dataloader
@@ -119,3 +109,9 @@ eval_loader_config:
   shuffle: False
   drop_last: False
   distributed: True
+  masking:
+    _target_: nanofm.data.multimodal.block_masking.BlockMasking
+    image_modalities: ["tok_rgb@256", "tok_depth@256", "tok_normal@256"]
+    text_modalities: ["scene_desc"]
+    grid_size: 16
+    block_sizes: [2, 3, 4]
