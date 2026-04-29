@@ -60,6 +60,7 @@ model_config:
 
 train_loader_config:
   _target_: nanofm.data.multimodal.create_multimodal_masked_dataloader
+  _recursive_: false   # let the factory instantiate `masking:` itself with merged shared kwargs
   root_dir: /work/com-304/datasets/clevr_com_304/
   split: train
   modalities: ${global_vars.modalities}
@@ -90,6 +91,7 @@ train_loader_config:
 
 eval_loader_config:
   _target_: nanofm.data.multimodal.create_multimodal_masked_dataloader
+  _recursive_: false   # let the factory instantiate `masking:` itself with merged shared kwargs
   root_dir: /work/com-304/datasets/clevr_com_304/
   split: val
   modalities: ${global_vars.modalities}
